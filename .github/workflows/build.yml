@@ -1,0 +1,269 @@
+name: Build socrates Kernel (ACK GKI + SukiSU)
+
+# 手动触发构建 (workflow_dispatch)，参数与 Action-Build 风格对齐
+on:
+  workflow_dispatch:
+    inputs:
+      ACK_TAG:
+        description: 'ACK kernel/common tag (android13-5.15 系列)'
+        required: false
+        default: 'android13-5.15.211_r00'
+      SUKISU_VERSION:
+        description: 'SukiSU 统一版本入口: tag/分支/commit, 或 latest (最新 release)。默认 builtin 分支 = 使用该分支最新提交 (仅 builtin 带 SUSFS 接口)'
+        required: false
+        default: 'builtin'
+      KSU_MANAGER_BRANCH:
+        description: '[废弃兼容] 旧管理器分支参数, 若填写将覆盖 SUKISU_VERSION 作为 checkout ref'
+        required: false
+        default: ''
+      KSU_BUILTIN_BRANCH:
+        description: '[废弃兼容] 旧内置分支参数, 若填写将覆盖 SUKISU_VERSION 作为 checkout ref'
+        required: false
+        default: ''
+      SUSFS:
+        description: '启用 SUSFS (需外部 susfs4ksu 补丁)'
+        type: boolean
+        default: true
+      KPM:
+        description: '启用 KPM (patch_linux + CONFIG_KPM)'
+        type: boolean
+        default: true
+      BBR:
+        description: 'BBRv3 + ECN + NETFILTER/IP_SET 网络增强 (需 BBRv3 补丁)'
+        type: boolean
+        default: false
+      ZRAM:
+        description: 'ZRAM 优化 (lz4k 补丁)'
+        type: boolean
+        default: false
+      LZ4_UPDATE:
+        description: 'Numbersf LZ4 升级'
+        type: boolean
+        default: false
+      UNICODE_BYPASS:
+        description: 'Unicode 绕过补丁'
+        type: boolean
+        default: false
+      RE_KERNEL:
+        description: 'Re:Kernel (Sakion-Team, LKM, 需 KPM)'
+        type: boolean
+        default: false
+      RESUBLEVEL:
+        description: 'SUBLEVEL 伪装 (如 194; 0=不伪装, 默认用 SUSFS 运行时伪装)'
+        required: false
+        default: '0'
+      SUFFIX:
+        description: '附加到版本串的自定义后缀 (如 -test; 空=不添加)'
+        required: false
+        default: ''
+      UPLOAD_RELEASE:
+        description: '上传到 GitHub Release (true) 或仅保留 Artifact (false)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: kernel-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CLANG_VERSION: r450784e
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout 本仓库 (scripts/patches/anykernel3)
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            pahole cpio zstd kmod bc bison flex libssl-dev \
+            libelf-dev dwarves python3 git curl unzip zip \
+            >/dev/null
+          pahole --version
+
+      - name: 准备 clang ${{ env.CLANG_VERSION }}
+        id: clang
+        uses: actions/cache@v4
+        with:
+          path: tools
+          key: clang-${{ env.CLANG_VERSION }}
+
+      - name: 下载 clang (cache miss)
+        if: steps.clang.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tools
+          curl -fL --retry 3 -o /tmp/clang.tar.gz \
+            "https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/clang-r450784e.tar.gz"
+          tar -xzf /tmp/clang.tar.gz -C tools --strip-components=1
+          rm -f /tmp/clang.tar.gz
+          tools/bin/clang --version | head -1
+
+      - name: 准备 ACK 源码
+        env:
+          ACK_TAG: ${{ inputs.ACK_TAG }}
+        run: |
+          # 本仓库 checkout 的 scripts 中 KERNEL_DIR 默认 $GITHUB_WORKSPACE/kernel_source
+          bash scripts/01_prepare_ack.sh
+
+      - name: 解析 SukiSU ref (latest -> 最新 release tag)
+        id: sukisu
+        env:
+          SUKISU_VERSION: ${{ inputs.SUKISU_VERSION }}
+          KSU_MANAGER_BRANCH: ${{ inputs.KSU_MANAGER_BRANCH }}
+          KSU_BUILTIN_BRANCH: ${{ inputs.KSU_BUILTIN_BRANCH }}
+        run: |
+          REF="$SUKISU_VERSION"
+          # 旧输入兼容: 显式填写的旧分支参数覆盖 SUKISU_VERSION
+          [ -n "$KSU_BUILTIN_BRANCH" ] && REF="$KSU_BUILTIN_BRANCH"
+          [ -n "$KSU_MANAGER_BRANCH" ] && REF="$KSU_MANAGER_BRANCH"
+          if [ "$REF" = "latest" ]; then
+            REF=$(curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
+              | grep '"tag_name"' | head -1 | sed -E 's/.*"v?([^"]+)".*/\1/')
+            [ -n "$REF" ] || { echo "::error::无法解析 SukiSU 最新 release"; exit 1; }
+          fi
+          echo "SUKISU_REF=$REF" >> "$GITHUB_OUTPUT"
+          echo "SUKISU_REF=$REF (来自 SUKISU_VERSION=$SUKISU_VERSION)"
+
+      - name: Checkout SukiSU 源码 (full clone, commit count 需要完整历史)
+        run: |
+          git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra.git /tmp/SukiSU-checkout
+          git -C /tmp/SukiSU-checkout checkout "${{ steps.sukisu.outputs.SUKISU_REF }}" 2>&1 | tail -1
+          echo "commits=$(git -C /tmp/SukiSU-checkout rev-list --count HEAD)"
+          git -C /tmp/SukiSU-checkout describe --tags --always --abbrev=0
+
+      - name: 下载 SukiSU Manager APK (官方 CI artifact / release 资产)
+        # 过渡方案 (TODO: 本地 gradle 编译):
+        # - 分支 ref: 从 SukiSU 官方 build-manager.yml 按分支取最新成功构建的 manager
+        #   artifact (Numbersf 同款, 分支模式也有 APK)
+        # - tag ref: 从同 ref 的 release 资产下载 (官方 CI 用同一份源码构建)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          REF="${{ steps.sukisu.outputs.SUKISU_REF }}"
+          mkdir -p dist
+          # 分支 ref: 官方 CI artifact (需要 GITHUB_TOKEN 访问公共仓库 artifact)
+          if ! echo "$REF" | grep -qE '^v?[0-9]+\.[0-9]+'; then
+            RUN_ID=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/workflows/build-manager.yml/runs?branch=$REF&status=success&event=push&per_page=1" --jq '.workflow_runs[0].id' 2>/dev/null || echo "")
+            if [ -n "$RUN_ID" ]; then
+              ARTIFACT_URL=$(gh api "repos/SukiSU-Ultra/SukiSU-Ultra/actions/runs/$RUN_ID/artifacts" --jq '.artifacts[] | select(.name == "manager") | .archive_download_url' 2>/dev/null | head -1 || echo "")
+              if [ -n "$ARTIFACT_URL" ]; then
+                curl -fL -H "Authorization: token $GITHUB_TOKEN" -o /tmp/manager.zip "$ARTIFACT_URL"
+                unzip -j /tmp/manager.zip '*.apk' -d dist/
+                echo "APK (CI artifact, branch=$REF): $(ls dist/*.apk 2>/dev/null | head -1 | xargs basename)"
+              fi
+            fi
+            if [ -z "$(ls dist/*.apk 2>/dev/null)" ]; then
+              echo "::warning::分支 $REF 无 CI artifact 可用, 跳过 manager APK — TODO: gradle 编译"
+            fi
+          else
+            # tag ref: release 资产
+            JSON=$(curl -fsSL "https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/tags/$REF" || echo "{}")
+            URL=$(echo "$JSON" | grep -oE '"browser_download_url": *"[^"]*release\.apk"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+            if [ -n "$URL" ]; then
+              curl -fL -o "dist/$(basename "$URL")" "$URL"
+              echo "APK (release asset): $(basename "$URL") (versionCode=$(basename "$URL" | grep -oE '[0-9]+-release' | tr -dc '0-9'))"
+            else
+              echo "::warning::ref $REF 无 release APK 资产, 跳过 manager APK — TODO: gradle 编译"
+            fi
+          fi
+
+      - name: 集成 SukiSU/SUSFS/KPM/功能补丁
+        env:
+          SUKISU_CHECKOUT: /tmp/SukiSU-checkout
+          SUKISU_VERSION: ${{ steps.sukisu.outputs.SUKISU_REF }}
+          SUSFS_ENABLE: ${{ inputs.SUSFS && '1' || '0' }}
+          BBR_ENABLE: ${{ inputs.BBR && '1' || '0' }}
+          ZRAM_ENABLE: ${{ inputs.ZRAM && '1' || '0' }}
+          LZ4_UPDATE: ${{ inputs.LZ4_UPDATE && '1' || '0' }}
+          UNICODE_ENABLE: ${{ inputs.UNICODE_BYPASS && '1' || '0' }}
+          RE_KERNEL_ENABLE: ${{ inputs.RE_KERNEL && '1' || '0' }}
+        run: |
+          bash scripts/06_integrate_features.sh
+
+      - name: 生成配置 (ACK gki_defconfig + thin LTO)
+        env:
+          SUSFS_ENABLE: ${{ inputs.SUSFS && '1' || '0' }}
+          BBR_ENABLE: ${{ inputs.BBR && '1' || '0' }}
+          ZRAM_ENABLE: ${{ inputs.ZRAM && '1' || '0' }}
+          KPM_ENABLE: ${{ inputs.KPM && '1' || '0' }}
+          RE_KERNEL_ENABLE: ${{ inputs.RE_KERNEL && '1' || '0' }}
+          SUKISU_CHECKOUT: /tmp/SukiSU-checkout
+          KSU_VERSION_AUTO: '1'
+          VERSION_FIX: '1'
+          SPOOF_SUBLEVEL_ENABLE: ${{ inputs.RESUBLEVEL != '0' && '1' || '0' }}
+          SPOOF_SUBLEVEL: ${{ inputs.RESUBLEVEL }}
+          OFFICIAL_VERSION_SUFFIX: ${{ inputs.SUFFIX }}
+        run: |
+          # KSU_VERSION_AUTO: 自动同步 main 线版本号 (匹配 CI 管理器 APK)
+          # VERSION_FIX: 注入干净版本串 (可复现; -dirty 不影响启动, 配置才是关键)
+          # RESUBLEVEL: 可选 SUBLEVEL 伪装 (默认 0 不启用); SUFFIX: 可选追加到版本串
+          bash scripts/02_set_config.sh
+          if [ -n "${{ inputs.SUFFIX }}" ] && [ "${{ inputs.RESUBLEVEL }}" = "0" ]; then
+            cd kernel_source
+            scripts/config --file out/.config --set-str CONFIG_LOCALVERSION "${{ inputs.SUFFIX }}"
+            make O=out olddefconfig
+            cd ..
+          fi
+          grep -E '^CONFIG_(KSU|KSU_SUSFS|KPM|LTO_CLANG_THIN)' kernel_source/out/.config | head -5
+
+      - name: 编译内核
+        run: |
+          bash scripts/03_build_kernel.sh
+
+      - name: 打包 AnyKernel3
+        env:
+          KPM_ENABLE: ${{ inputs.KPM && '1' || '0' }}
+          SUSFS_ENABLE: ${{ inputs.SUSFS && '1' || '0' }}
+        run: |
+          bash scripts/04_make_ak3.sh
+
+      - name: 版本一致性校验 (内核驱动 vs manager APK)
+        id: version-check
+        run: |
+          KSU_VER=$(grep -E '^KSU_VERSION[[:space:]]+:= ' kernel_source/KernelSU/kernel/Makefile | awk '{print $3}')
+          APK_VER=$(ls dist/*release.apk 2>/dev/null | head -1 | grep -oE '[0-9]+-release' | tr -dc '0-9')
+          echo "内核 KSU_VERSION=$KSU_VER"
+          if [ -n "$APK_VER" ]; then
+            echo "APK versionCode=$APK_VER"
+            if [ "$KSU_VER" = "$APK_VER" ]; then
+              echo "✅ 版本一致: $KSU_VER"
+            else
+              echo "::warning::版本不一致! 内核 $KSU_VER vs APK $APK_VER"
+            fi
+          else
+            echo "::warning::无 APK (分支/commit ref), 跳过一致性对比 — TODO: gradle 编译"
+          fi
+          echo "VERSION_MATCH=$KSU_VER" >> "$GITHUB_OUTPUT"
+
+      - name: 提取产物信息
+        id: info
+        run: |
+          VERSION=$(strings kernel_source/out/vmlinux | grep -m1 'Linux version' || echo unknown)
+          echo "KERNEL_VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版 本: $VERSION"
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_socrates_${{ inputs.ACK_TAG }}
+          path: |
+            dist/AnyKernel3_socrates_*.zip
+            dist/*release.apk
+            kernel_source/out/arch/arm64/boot/Image
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传 GitHub Release
+        if: inputs.UPLOAD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: kernel-${{ inputs.ACK_TAG }}-${{ github.run_number }}
+          name: socrates kernel ${{ inputs.ACK_TAG }} build #${{ github.run_number }}
+          body: |
+            **内核版本**: ${{ steps.info.outputs.KERNEL_VERSION }}
+            **SukiSU**: ${{ inputs.KSU_BUILTIN_BRANCH }} | **SUSFS**: ${{ inputs.SUSFS }} | **KPM**: ${{ inputs.KPM }}
+          files: dist/AnyKernel3_socrates_*.zip
