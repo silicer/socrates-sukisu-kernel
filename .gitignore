@@ -1,0 +1,30 @@
+# ---------- 构建产物与本地环境 ----------
+# 构建产物 (AK3 zip / boot.img 等)
+dist/
+# 内核源码树 (ACK clone)
+kernel_source/
+kernel_source_*/
+# clang 工具链
+/tools/
+# 构建输出
+out/
+*.o
+*.log
+# 刷机包 / 镜像 / 大产物
+*.img
+*.zip
+*.tar.gz
+*.tar.zst
+*.apk
+# 补丁残留
+*.rej
+*.orig
+# 参考用 (不入库)
+kernel_devicetree/
+KernelSU_bugreport_*
+
+# 编译缓存 (ccache / thinLTO / ld wrapper)
+.ccache/
+.thinlto-cache/
+.ld-wrapper
+anykernel3/Image
