@@ -157,12 +157,57 @@ fi
 if [[ "$BBR_ENABLE" == "1" ]]; then
   log "5/7 应用 BBRv3 backport (android13-5.15) ..."
   patch -p1 < "$ROOT_DIR/patches/bbrv3/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch" 2>&1 | tail -30 || true
-  REJS=$(find . -name '*.rej' | grep -v '^./out/')
+  REJS=$(find . -name '*.rej' | grep -v '^./out/' || true)
   if [ -n "$REJS" ]; then
     echo "⚠️ BBR 补丁 reject 文件:"; echo "$REJS"
     for r in $REJS; do echo "--- $r ---"; head -10 "$r"; done
   fi
   find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f
+  # ACK 211 适配: Numbersf 补丁基于 OnePlus 树, 部分 hunk 与 ACK 原版不匹配, 手动补必需项
+  # 1) tcp_sock 位域: fast_ack_mode/tlp_orig_data_app_limited (tcp_bbr3.c 必需, ACK 211 无)
+  if ! grep -q 'fast_ack_mode' "$KERNEL_DIR/include/linux/tcp.h"; then
+    python3 - "$KERNEL_DIR/include/linux/tcp.h" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = '''\tu8\tcompressed_ack;
+\tu8\tdup_ack_counter:2,
+\t\ttlp_retrans:1,\t/* TLP is a retransmission */
+\t\tunused:5;
+\tu32\tchrono_start;'''
+new = '''\tu8\tcompressed_ack;
+\tu8\tdup_ack_counter:2,
+\t\ttlp_retrans:1,\t/* TLP is a retransmission */
+#ifndef __GENKSYMS__
+\t\tfast_ack_mode:2, /* which fast ack mode ? */
+\t\ttlp_orig_data_app_limited:1, /* app-limited before TLP rtx? */
+\t\tunused:2;
+#else
+\t\tunused:5;
+#endif
+\tu32\tchrono_start;'''
+assert old in s, "tcp.h 位域锚点未找到"
+s = s.replace(old, new)
+open(p, 'w').write(s)
+PYEOF
+    log "  tcp.h: 补 fast_ack_mode/tlp_orig_data_app_limited 位域"
+  fi
+  # 2) netdevice.h: GSO_LEGACY_MAX_SIZE (tcp_bbr3.c 引用, ACK 211 无)
+  if ! grep -q 'GSO_LEGACY_MAX_SIZE' "$KERNEL_DIR/include/linux/netdevice.h"; then
+    python3 - "$KERNEL_DIR/include/linux/netdevice.h" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = '''struct net_device {'''
+new = '''#define GSO_LEGACY_MAX_SIZE\t65536u
+
+struct net_device {'''
+assert old in s, "netdevice.h 锚点未找到"
+s = s.replace(old, new)
+open(p, 'w').write(s)
+PYEOF
+    log "  netdevice.h: 补 GSO_LEGACY_MAX_SIZE"
+  fi
 else
   log "5/7 跳过 BBRv3"
 fi
