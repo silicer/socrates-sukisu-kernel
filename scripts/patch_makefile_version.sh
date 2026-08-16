@@ -17,12 +17,26 @@ else
   echo "OFFICIAL_VERSION_SUFFIX 已存在，跳过"
 fi
 
-# 2) echo 行末尾注入 $(OFFICIAL_VERSION_SUFFIX)（末尾还是 KMI_GENERATION))" 时才注入）
-if grep -q 'KMI_GENERATION))"$\|KMI_GENERATION))"' "$MF" && ! grep -q 'KMI_GENERATION))\$(OFFICIAL_VERSION_SUFFIX)' "$MF"; then
-  sed -i 's|$(KMI_GENERATION))"|$(KMI_GENERATION))$(OFFICIAL_VERSION_SUFFIX)"|' "$MF"
-  echo "已注入后缀引用"
+# 2) filechk 统一为简化版 (去掉 setlocalversion, 防 UTS_RELEASE 超 64 字符)
+if grep -q 'setlocalversion' "$MF"; then
+  python3 - "$MF" <<'PYEOF'
+import sys
+mf = sys.argv[1]
+s = open(mf).read()
+lines = s.split('\n')
+for i, l in enumerate(lines):
+    if l.startswith('filechk_kernel.release = \\'):
+        j = i + 1
+        while j < len(lines) and lines[j].endswith('\\'):
+            j += 1
+        new_block = ['filechk_kernel.release = \\', '\techo "$(KERNELVERSION)$(OFFICIAL_VERSION_SUFFIX)"']
+        lines[i:j+1] = new_block
+        break
+open(mf, 'w').write('\n'.join(lines))
+print("filechk 已简化为 KERNELVERSION+后缀")
+PYEOF
 else
-  echo "后缀引用已存在，跳过"
+  echo "filechk 已是简化版"
 fi
 
 grep -n 'OFFICIAL_VERSION_SUFFIX' "$MF" | head -3
