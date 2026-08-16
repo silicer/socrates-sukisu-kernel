@@ -121,8 +121,7 @@ socrates_kernel_build/
 
 ## CI（build.yml）要点
 
-- 手动触发（workflow_dispatch），参数：ACK_TAG / SUKISU_VERSION（默认 builtin）/ SUSFS / KPM / BBR / ZRAM / LZ4_UPDATE / UNICODE_BYPASS / RE_KERNEL / RESUBLEVEL / SUFFIX / UPLOAD_RELEASE
-- clang 缓存（GitHub cache）；ccache + thinLTO 缓存（03 脚本 CCACHE_ENABLE=1）
+- 手动触发（workflow_dispatch），参数：ACK_TAG / SUKISU_VERSION（默认 builtin）/ SUSFS / KPM / BBR / RESUBLEVEL / SUFFIX / UPLOAD_RELEASE（ZRAM/LZ4/Unicode/Re:Kernel 已移除——lz4k 与 MTE 不兼容、LZ4 升级 bootloop、Re:Kernel 用户自行用成品模块）
+- clang 缓存（GitHub cache）；ccache + thinLTO 缓存（编译 step CCACHE_ENABLE=1 + restore/save steps）
 - APK：分支→官方 CI artifact；tag→release 资产（过渡方案，TODO: gradle 编译）
 - 版本一致性校验 step：内核 KSU_VERSION vs APK versionCode
-- **注意**：LZ4_UPDATE 输入默认 false（bootloop 元凶，勿开）；ZRAM 默认 false（lz4k 有 MTE 风险）
