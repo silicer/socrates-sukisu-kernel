@@ -135,6 +135,8 @@ fi
 
 # ---------- 3. KPM 工具 (不修改源码, 打包时使用) ----------
 log "3/7 KPM 工具准备 (patch_linux 在 $SUKISU_PATCH_DIR/kpm/)"
+# git clone 可能丢失可执行位, 自动修复
+chmod +x "$SUKISU_PATCH_DIR"/kpm/* 2>/dev/null || true
 [[ -x "$SUKISU_PATCH_DIR/kpm/patch_linux" ]] || die "缺少 patch_linux"
 
 # ---------- 4. ZRAM (lz4k 算法) ----------
