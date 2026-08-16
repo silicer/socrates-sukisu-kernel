@@ -7,12 +7,13 @@ set -euo pipefail
 # ---------- 常量 ----------
 KERNEL_VERSION="5.15.211"
 ANDROID_VERSION="android13-5.15"
-ACK_TAG="android13-5.15.211_r00"
+# 允许通过环境变量覆盖（CI 的 ACK_TAG 输入就是通过这里生效）
+ACK_TAG="${ACK_TAG:-android13-5.15.211_r00}"
 ACK_REPO="https://android.googlesource.com/kernel/common"
 
 # clang r450784e (14.0.7, 与官方内核同款工具链) —— googlesource 已删旧分支头,
 # 从 GitHub release 资产获取 (ravindu644/Android-Kernel-Tutorials tag=toolchains)
-CLANG_VERSION="r450784e"
+CLANG_VERSION="${CLANG_VERSION:-r450784e}"
 CLANG_TARBALL_URL="https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/clang-r450784e.tar.gz"
 
 # 版本串注入 (干净可复现; 注: 真机验证 -dirty 也能启动, 配置才是关键, 见 PLAN.md)

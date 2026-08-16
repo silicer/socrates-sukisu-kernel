@@ -3,8 +3,8 @@
 # 用法: scripts/02_set_config.sh
 # 环境开关 (与 06_integrate_features.sh 一一对应, 需先运行 06 应用对应补丁):
 #   SUSFS_ENABLE=1 (默认)  SUSFS 配置块, 依赖 susfs4ksu 补丁
-#   BBR_ENABLE=1  (默认)  BBRv3/ECN/NETFILTER/IP_SET 配置块, 依赖 BBRv3 补丁
-#   ZRAM_ENABLE=1  (默认)  ZRAM lz4k 配置块, 依赖 lz4k 补丁
+#   BBR_ENABLE=0  (默认)  BBRv3/ECN/NETFILTER/IP_SET 配置块, 依赖 BBRv3 补丁
+#   ZRAM_ENABLE=0  (默认)  ZRAM lz4k 配置块, 依赖 lz4k 补丁 (已知与 MTE 不兼容, 慎用)
 #   KPM_ENABLE=1   (默认)  CONFIG_KPM
 #   RE_KERNEL_ENABLE=0 (默认)  Re:Kernel (LKM, 需 KPM 的 kprobe 接口)
 #   SPOOF_VERSION=0 (默认) 版本伪装开关, 1=编译期伪装 (默认 0, 用 SUSFS 运行时伪装)
@@ -23,12 +23,12 @@ RE_KERNEL_ENABLE="${RE_KERNEL_ENABLE:-0}"
 log "1/4 生成 gki_defconfig ..."
 make O=out gki_defconfig >/dev/null 2>&1 || make O=out gki_defconfig
 
-log "2/4 社区优化：关 KASAN / 开 thin LTO / 关 BTF ..."
-# ACK gki_defconfig 自带 KASAN (gki-debug 配置); KASAN 与 LTO 互斥, 社区构建关闭
-# 3/4 编译配置: 保持 GKI 官方规范 (真机验证结论! socrates 只能启动官方规范配置):
+log "2/4 保持 GKI 官方规范：thin LTO ..."
+# 编译配置: 保持 GKI 官方规范 (真机验证结论! socrates 只能启动官方规范配置):
 #   KASAN_HW_TAGS + LTO_CLANG_THIN + CFI_CLANG + SHADOW_CALL_STACK + DEBUG_INFO_BTF
 #   —— 任何"社区优化"(关 KASAN / LTO_NONE / 无 CFI) 都会 bootloop, 不要改!
-# 只显式切 thin LTO (gki_defconfig 默认 FULL, 40796 验证配置是 THIN)
+# 这里只显式切 thin LTO (gki_defconfig 默认 FULL, 40796 验证配置是 THIN)
+# 其余关键项依赖 gki_defconfig，并在下方做断言校验。
 scripts/config --file out/.config \
   -e LTO_CLANG -e LTO_CLANG_THIN \
   -d LTO_CLANG_NONE -d LTO_CLANG_FULL
@@ -51,7 +51,7 @@ if [[ "$SUSFS_ENABLE" == "1" && -f drivers/kernelsu/Kconfig && $(grep -c 'KSU_SU
     -e KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG -e KSU_SUSFS_OPEN_REDIRECT
 else
   if [[ "$SUSFS_ENABLE" == "1" ]]; then
-    log "  ⚠️ 当前 SukiSU kernel/ 无 KSU_SUSFS 接口 (06 未回退 builtin), SUSFS 配置跳过"
+    die "SUSFS_ENABLE=1 但当前 SukiSU kernel/ 无 KSU_SUSFS 接口；请先运行 06_integrate_features.sh（或显式设 SUSFS_ENABLE=0）"
   fi
   # SukiSU builtin 的 Kconfig 默认开启 SUSFS, 关闭时必须连同子项一起关
   scripts/config --file out/.config \
@@ -85,6 +85,7 @@ fi
 
 # ZRAM lz4k (依赖 06 的 lz4k/lz4kd 补丁; 只开 config 不开补丁会导致缺源码编译失败)
 if [[ "$ZRAM_ENABLE" == "1" ]]; then
+  warn "ZRAM lz4k/lz4kd 已知与 KASAN_HW_TAGS(MTE) 不兼容，真机可能 bootloop；请确认你在做什么"
   scripts/config --file out/.config \
     -e CRYPTO_LZ4HC -e CRYPTO_LZ4K -e CRYPTO_LZ4KD -e CRYPTO_842 -e CRYPTO_LZ4K_OPLUS -e ZRAM_WRITEBACK
 else
@@ -100,6 +101,13 @@ else
 fi
 
 make O=out olddefconfig >/dev/null 2>&1 || make O=out olddefconfig
+
+# ---------- 关键配置断言（bootloop 硬约束，缺失直接失败） ----------
+for sym in KASAN_HW_TAGS LTO_CLANG_THIN CFI_CLANG SHADOW_CALL_STACK DEBUG_INFO_BTF; do
+  if ! grep -q "^CONFIG_${sym}=y" out/.config; then
+    die "缺少关键配置 CONFIG_${sym}=y；请检查 gki_defconfig / 02_set_config.sh 是否被意外修改"
+  fi
+done
 
 log "4/4 配置完成，关键项："
 grep -E '^CONFIG_(CC_IS_CLANG|LTO_CLANG_THIN|KASAN|DEBUG_INFO_BTF|LOCALVERSION|KSU|KSU_SUSFS|KPM|TCP_CONG_BBR3|CRYPTO_LZ4K)' out/.config
@@ -139,7 +147,7 @@ if [[ "$VERSION_FIX" == "1" ]]; then
   make O=out prepare >/dev/null 2>&1 || make O=out prepare
   log "UTS_RELEASE: $(grep UTS_RELEASE out/include/generated/utsrelease.h)"
 else
-  log "5/5 跳过版本串固化 (VERSION_FIX=0) ⚠️ 版本串将带 -dirty, 真机可能 bootloop"
+  log "5/5 跳过版本串固化 (VERSION_FIX=0) — 版本串可能带 -dirty；真机验证 -dirty 不影响启动，仅可复现性变差"
 fi
 # 可选: 编译期伪装 SUBLEVEL (如伪装成官方 5.15.194), 默认不启用 (用 SUSFS 运行时伪装)
 SPOOF_SUBLEVEL_ENABLE="${SPOOF_SUBLEVEL_ENABLE:-0}"

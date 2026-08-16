@@ -11,6 +11,7 @@ setup_toolchain
 
 JOBS="${1:-}"
 JOBS="${JOBS#-j}"
+JOBS="${JOBS# }"  # 兼容 "-j 3" 这种带空格写法
 # CI (GitHub Actions) 用全部核; 本地默认留一核给系统; 可显式传 -jN 覆盖
 if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
   JOBS="${JOBS:-$(nproc)}"
@@ -38,6 +39,7 @@ if [[ "$CCACHE_ENABLE" == "1" ]]; then
   mkdir -p "$LDCACHE_DIR"
   LD_WRAPPER="$ROOT_DIR/.ld-wrapper"
   LLD_BIN="$(command -v ld.lld)"
+  [[ -n "$LLD_BIN" ]] || die "未找到 ld.lld（工具链不完整，请重新运行 01_prepare_ack.sh）"
   printf '#!/bin/bash\nexec "%s" "$@" --thinlto-cache-dir="%s" --thinlto-cache-policy=cache_size_bytes=%s --thinlto-jobs=%s\n' \
     "$LLD_BIN" "$LDCACHE_DIR" "${THINLTO_CACHE_SIZE:-2g}" "$(nproc)" > "$LD_WRAPPER"
   chmod +x "$LD_WRAPPER"

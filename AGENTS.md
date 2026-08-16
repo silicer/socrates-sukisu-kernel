@@ -1,6 +1,6 @@
 # AGENTS.md — socrates (Redmi K60 Pro) 内核构建项目
 
-> 给未来 agent/开发者的项目速览。详细方案与历史见 PLAN.md。
+> 给未来 agent/开发者的项目速览。详细方案与历史见 git log / 本文件。
 
 ## 项目是什么
 
@@ -12,7 +12,7 @@
 |---|---|
 | 内核源码 | ACK kernel/common tag `android13-5.15.211_r00`（纯 GKI，无 vendor 树） |
 | 工具链 | clang r450784e (14.0.7)（与官方同款，googlesource 已删，从 GitHub release 下载） |
-| Root | SukiSU Ultra **builtin 分支**（b1d534bc）+ SUSFS（susfs4ksu gki-android13-5.15） |
+| Root | SukiSU Ultra **builtin 分支**（默认取最新提交，可用 `SUKISU_VERSION` 指定 tag/commit）+ SUSFS（susfs4ksu gki-android13-5.15） |
 | KPM | CONFIG_KPM + patch_linux |
 | 版本机制 | `SUKISU_VERSION` 统一入口（默认 builtin）；KSU_VERSION 自动同步 main 线（`40000+main commits-2815`），与官方 CI 管理器 APK versionCode 同源 |
 
@@ -21,7 +21,7 @@
 1. **编译配置必须保持 GKI 官方规范**：
    - `KASAN_HW_TAGS=y`（MTE 硬件标签）、`LTO_CLANG_THIN=y`、`CFI_CLANG=y`、`SHADOW_CALL_STACK=y`、`DEBUG_INFO_BTF=y`
    - **任何"社区优化"（关 KASAN / LTO_NONE / 无 CFI）在 socrates 上必 bootloop**（多轮二分实测）
-   - 02_set_config.sh 已固化此配置，不要再"优化"它
+   - 02_set_config.sh 已固化此配置，并在运行时对关键配置做断言；不要再"优化"它
 2. **ZRAM 第三方算法（lz4k/lz4kd）不可用**：SukiSU_patch 的实现与 KASAN_HW_TAGS(MTE) 不兼容，设为默认即 bootloop。ZRAM 用内核自带算法（lzo/lz4/zstd）
 3. **LZ4 升级（Numbersf lz4_oplus）会导致 bootloop**（替换 lib/lz4 基础库），已弃用
 4. **版本串**：-dirty 不影响启动（已实测）；注入固定干净串（`5.15.211-00002-g13a57ace02a3`）仅为可复现
@@ -33,20 +33,24 @@
 # 1. 准备（源码+工具链+依赖）
 bash scripts/01_prepare_ack.sh                    # clang + ACK clone + 依赖
 
-# 2. 集成（SukiSU/SUSFS/KPM/可选功能）
+# 2. 准备 SukiSU 源码（完整 clone，commit count 需要完整历史）
+git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra.git /tmp/SukiSU-builtin-full
+git -C /tmp/SukiSU-builtin-full checkout builtin
+
+# 3. 集成（SukiSU/SUSFS/KPM/可选功能）
 export KERNEL_DIR=$PWD/kernel_source SUKISU_CHECKOUT=/tmp/SukiSU-builtin-full SUKISU_VERSION=builtin
 bash scripts/06_integrate_features.sh            # SUSFS_ENABLE/BBR_ENABLE/ZRAM_ENABLE/... 开关
 
-# 3. 配置（KASAN_HW_TAGS + thin LTO + KSU_VERSION 自动同步 + 版本串固化）
+# 4. 配置（KASAN_HW_TAGS + thin LTO + KSU_VERSION 自动同步 + 版本串固化）
 export SUKISU_CHECKOUT=/tmp/SukiSU-builtin-full
 bash scripts/02_set_config.sh
 
-# 4. 编译（-j 默认 nproc-1；此环境 bash 工具 ~700s 超时，大编译需分段续跑）
+# 5. 编译（-j 默认 nproc-1；此环境 bash 工具 ~700s 超时，大编译需分段续跑）
 bash scripts/03_build_kernel.sh -j3
 
-# 5. 打包
+# 6. 打包
 bash scripts/04_make_ak3.sh                       # AnyKernel3 zip（KPM/SUSFS 开关）
-bash scripts/05_make_bootimg.sh dist/boot.img out  # fastboot boot 测试镜像（自动 tar.zst 压缩）
+bash scripts/05_make_bootimg.sh dist/boot.img dist/boot-test.img  # fastboot boot 测试镜像（自动 tar.zst 压缩）
 ```
 
 ## 真机验证流程
@@ -66,7 +70,7 @@ bash scripts/05_make_bootimg.sh dist/boot.img out  # fastboot boot 测试镜像�
 | `04_make_ak3.sh` | AK3 打包（WildKernels 模板：block=boot + flash_boot，GKI 专用） |
 | `05_make_bootimg.sh` | magiskboot 基于官方 boot.img 打包测试镜像（自动 zst 压缩） |
 | `06_integrate_features.sh` | SukiSU/SUSFS/KPM/BBR/ZRAM/Unicode/LZ4 集成（SUSFS 幂等：tag 基线恢复） |
-| `07_fetch_deps.sh` | SukiSU_patch/susfs4ksu/lz4_oplus/Re-Kernel/susfs 模块 依赖拉取 |
+| `07_fetch_deps.sh` | 按需拉取依赖：SukiSU_patch 常拉；SUSFS/LZ4/Re-Kernel 按开关拉取 |
 | `patch_makefile_version.sh` | 版本串注入（幂等） |
 
 ## 目录结构
@@ -83,8 +87,7 @@ socrates_kernel_build/
 │   ├── boot.img                  # 官方原厂（打包输入）
 │   └── SukiSU_*.apk              # 管理器
 ├── kernel_source_ack211/         # 本地主力树（独立 git 仓库，gitignore）
-├── tools/                        # clang r450784e（gitignore）
-└── PLAN.md                       # 完整方案与历史
+└── tools/                        # clang r450784e（gitignore）
 ```
 
 ## 环境怪象（本容器）
@@ -121,7 +124,7 @@ socrates_kernel_build/
 
 ## CI（build.yml）要点
 
-- 手动触发（workflow_dispatch），参数：ACK_TAG / SUKISU_VERSION（默认 builtin）/ SUSFS / KPM / BBR / RESUBLEVEL / SUFFIX / UPLOAD_RELEASE（ZRAM/LZ4/Unicode/Re:Kernel 已移除——lz4k 与 MTE 不兼容、LZ4 升级 bootloop、Re:Kernel 用户自行用成品模块）
+- 手动触发（workflow_dispatch），参数：ACK_TAG（已通过 common.sh 环境变量覆盖生效）/ SUKISU_VERSION（默认 builtin）/ SUSFS / KPM / BBR / RESUBLEVEL / SUFFIX（替换默认版本后缀）/ UPLOAD_RELEASE（ZRAM/LZ4/Unicode/Re:Kernel 已移除——lz4k 与 MTE 不兼容、LZ4 升级 bootloop、Re:Kernel 用户自行用成品模块）
 - clang 缓存（GitHub cache）；ccache + thinLTO 缓存（编译 step CCACHE_ENABLE=1 + restore/save steps）
 - APK：分支→官方 CI artifact；tag→release 资产（过渡方案，TODO: gradle 编译）
 - 版本一致性校验 step：内核 KSU_VERSION vs APK versionCode

@@ -22,6 +22,19 @@ LZ4_OPLUS_DIR="${LZ4_OPLUS_DIR:-/tmp/lz4_oplus}"
 RE_KERNEL_DIR="${RE_KERNEL_DIR:-/tmp/Re-Kernel}"
 RE_KERNEL_ENABLE="${RE_KERNEL_ENABLE:-0}"
 
+# 检查当前内核树是否还有补丁 reject；有则直接失败，避免“假成功”
+check_no_rej() {
+  local label="$1"
+  local rejs
+  rejs=$(find . -name '*.rej' | grep -v '^./out/' || true)
+  if [ -n "$rejs" ]; then
+    echo "❌ $label 补丁存在 reject 文件："
+    echo "$rejs"
+    for r in $rejs; do echo "--- $r ---"; head -20 "$r"; done
+    die "$label 补丁未完全应用，请手动处理 reject 后再继续"
+  fi
+}
+
 # ---------- 1. SukiSU Ultra (统一版本: SUKISU_VERSION 决定版本号与源码) ----------
 # 输入:
 #   SUKISU_CHECKOUT: SukiSU 源码 checkout 目录 (需含 .git, full clone) —— 版本唯一入口
@@ -29,6 +42,9 @@ RE_KERNEL_ENABLE="${RE_KERNEL_ENABLE:-0}"
 # 兼容旧输入: KSU_MANAGER_BRANCH/KSU_BUILTIN_BRANCH 不再使用 (由 SUKISU_VERSION 取代)
 [[ -n "${SUKISU_CHECKOUT:-}" ]] || die "缺少 SUKISU_CHECKOUT (SukiSU 源码 checkout 目录, 见 build.yml 的 checkout 步骤)"
 [[ -d "$SUKISU_CHECKOUT/.git" ]] || die "SUKISU_CHECKOUT 不是 git 仓库: $SUKISU_CHECKOUT (commit count 需要完整历史, 不要 --depth 浅克隆)"
+if git -C "$SUKISU_CHECKOUT" rev-parse --is-shallow-repository 2>/dev/null | grep -q true; then
+  die "SUKISU_CHECKOUT 是浅克隆，commit count 不准确；请使用完整 clone（不要 --depth）"
+fi
 
 log "1/7 集成 SukiSU Ultra (ref=$SUKISU_VERSION, checkout=$SUKISU_CHECKOUT) ..."
 
@@ -46,6 +62,9 @@ if [[ -z "$VERSION_BASE" ]]; then
   END=$(grep -oP 'val end = \K\d+' "$SUKISU_CHECKOUT/manager/build.gradle.kts" || true)
   VERSION_BASE=$((MAJOR * 10000))
   VERSION_OFFSET="$END"
+fi
+if [[ -z "$VERSION_BASE" || -z "$VERSION_OFFSET" ]]; then
+  die "无法从 SukiSU checkout 解析 VERSION_BASE/VERSION_OFFSET，请检查 SUKISU_CHECKOUT 是否为有效 SukiSU 源码"
 fi
 KSU_VERSION=$((VERSION_BASE + COMMITS - VERSION_OFFSET))
 # versionName: 优先 API 最新 release tag (Numbersf 同款), 失败回退 checkout describe
@@ -102,7 +121,11 @@ if [[ "$SUSFS_ENABLE" == "1" ]]; then
   SUSFS_BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
   if [[ -n "$SUSFS_BASE_TAG" ]]; then
     for f in $(grep '^diff --git' 50_add_susfs_in_gki-android13-5.15.patch | awk '{print $3}' | cut -c3-); do
-      git show "$SUSFS_BASE_TAG:$f" > "$f" 2>/dev/null || true
+      if git cat-file -e "$SUSFS_BASE_TAG:$f" 2>/dev/null; then
+        git show "$SUSFS_BASE_TAG:$f" > "$f"
+      else
+        warn "  文件 $f 不在基线 tag $SUSFS_BASE_TAG 中，跳过恢复（可能是新增文件）"
+      fi
     done
   else
     log "  ⚠️ 无法确定 git tag (非 git 树?), 跳过幂等恢复 — 重复执行可能重复插入补丁"
@@ -127,8 +150,12 @@ if 'susfs_def.h' not in s:
     s=s.replace('#include "pnode.h"\n','#include "pnode.h"\n\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n\n#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\n\n#endif\n',1)
     open(p,'w').write(s)
 PYEOF
-  # 清理 reject/orig (补丁冲突残留; fts_521 等设备专属 Makefile.rej 对小米设备无意义, 丢弃)
-  find . -name '*.rej' -o -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
+  # 手动修复已覆盖这两个文件的 reject，清理对应 .rej；其余 reject 交给 check_no_rej 严格失败
+  rm -f fs/proc/task_mmu.c.rej fs/namespace.c.rej
+  # 严格检查：手动修复后仍存在 reject 就失败，不再静默删除
+  check_no_rej "SUSFS"
+  # 清理 patch 备份文件（.orig），保留 .rej 以便排查（这里已确保没有 .rej）
+  find . -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "2/7 跳过 SUSFS"
 fi
@@ -148,7 +175,8 @@ if [[ "$ZRAM_ENABLE" == "1" ]]; then
   cp -r "$SUKISU_PATCH_DIR"/other/zram/lz4k_oplus lib/
   patch -p1 -F 3 < "$SUKISU_PATCH_DIR/other/zram/zram_patch/5.15/lz4kd.patch" 2>&1 | tail -1 || true
   patch -p1 -F 3 < "$SUKISU_PATCH_DIR/other/zram/zram_patch/5.15/lz4k_oplus.patch" 2>&1 | tail -1 || true
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
+  check_no_rej "ZRAM"
+  find . -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "4/7 跳过 ZRAM"
 fi
@@ -157,12 +185,7 @@ fi
 if [[ "$BBR_ENABLE" == "1" ]]; then
   log "5/7 应用 BBRv3 backport (android13-5.15) ..."
   patch -p1 < "$ROOT_DIR/patches/bbrv3/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch" 2>&1 | tail -30 || true
-  REJS=$(find . -name '*.rej' | grep -v '^./out/' || true)
-  if [ -n "$REJS" ]; then
-    echo "⚠️ BBR 补丁 reject 文件:"; echo "$REJS"
-    for r in $REJS; do echo "--- $r ---"; head -10 "$r"; done
-  fi
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
+  # 先不删 reject，等下面的 ACK 211 手动适配完成后统一检查
   # ACK 211 适配: Numbersf 补丁基于 OnePlus 树, 部分 hunk 与 ACK 原版不匹配, 手动补必需项
   # 1) tcp_sock 位域: fast_ack_mode/tlp_orig_data_app_limited (tcp_bbr3.c 必需, ACK 211 无)
   if ! grep -q 'fast_ack_mode' "$KERNEL_DIR/include/linux/tcp.h"; then
@@ -208,6 +231,11 @@ open(p, 'w').write(s)
 PYEOF
     log "  netdevice.h: 补 GSO_LEGACY_MAX_SIZE"
   fi
+  # 手动适配已覆盖 tcp.h/netdevice.h 的 reject，清理对应 .rej；其余 reject 交给 check_no_rej 严格失败
+  rm -f include/linux/tcp.h.rej include/linux/netdevice.h.rej
+  # 手动适配后仍有 reject 则失败
+  check_no_rej "BBRv3"
+  find . -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "5/7 跳过 BBRv3"
 fi
@@ -216,7 +244,8 @@ fi
 if [[ "$UNICODE_ENABLE" == "1" ]]; then
   log "6/7 应用 Unicode 绕过补丁 ..."
   patch -p1 --forward < "$ROOT_DIR/patches/unicode/unicode_bypass_fix_6.1-.patch" 2>&1 | tail -1 || true
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
+  check_no_rej "Unicode"
+  find . -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "6/7 跳过 Unicode 补丁"
 fi

@@ -4,12 +4,12 @@
 
 ## ✨ 特性
 
-- **ACK 官方 GKI 内核**：kernel/common `android13-5.15` 系列（纯 GKI，构建时自动拉取最新 tag）
+- **ACK 官方 GKI 内核**：kernel/common `android13-5.15` 系列（默认 `android13-5.15.211_r00`，可通过 `ACK_TAG` 覆盖）
 - **SukiSU Ultra**（builtin 分支内置）+ **SUSFS**（隐藏/伪装/防检测）
 - **KPM**（内核补丁模块，支持 .kpm 模块加载）
 - **KSU_VERSION 自动同步**：每次构建自动计算 SukiSU main 线最新版本号，与官方管理器 APK 永远一致
-- **可选优化**：BBRv3 + ECN + NETFILTER/IP_SET 网络增强、ZRAM lz4k
-- **配置保持 GKI 官方规范**（KASAN_HW_TAGS + LTO_THIN + CFI + SCS）——真机验证，保证可启动
+- **可选优化**：BBRv3 + ECN + NETFILTER/IP_SET 网络增强
+- **配置保持 GKI 官方规范**（KASAN_HW_TAGS + LTO_THIN + CFI + SCS）——真机验证，保证可启动，脚本含关键配置断言
 
 ## 🚀 快速开始（本地）
 
@@ -19,19 +19,23 @@
 # 1. 准备源码与工具链
 bash scripts/01_prepare_ack.sh
 
-# 2. 集成 SukiSU/SUSFS/KPM（可选开关见 AGENTS.md）
-export KERNEL_DIR=$PWD/kernel_source SUKISU_CHECKOUT=/tmp/SukiSU-builtin-full
+# 2. 准备 SukiSU 源码（完整 clone，commit count 需要完整历史）
+git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra.git /tmp/SukiSU-builtin-full
+git -C /tmp/SukiSU-builtin-full checkout builtin
+
+# 3. 集成 SukiSU/SUSFS/KPM（可选开关见 AGENTS.md）
+export KERNEL_DIR=$PWD/kernel_source SUKISU_CHECKOUT=/tmp/SukiSU-builtin-full SUKISU_VERSION=builtin
 bash scripts/06_integrate_features.sh
 
-# 3. 生成配置（官方规范 + KSU_VERSION 自动同步）
+# 4. 生成配置（官方规范 + KSU_VERSION 自动同步）
 bash scripts/02_set_config.sh
 
-# 4. 编译（-jN 可选，默认留一核）
+# 5. 编译（-jN 可选，默认留一核）
 bash scripts/03_build_kernel.sh
 
-# 5. 打包
-bash scripts/04_make_ak3.sh                    # AnyKernel3 刷机包
-bash scripts/05_make_bootimg.sh dist/boot.img  # fastboot boot 测试镜像
+# 6. 打包
+bash scripts/04_make_ak3.sh                          # AnyKernel3 刷机包
+bash scripts/05_make_bootimg.sh dist/boot.img dist/boot-test.img  # fastboot boot 测试镜像
 ```
 
 ## 🤖 GitHub Actions 一键构建
@@ -40,11 +44,11 @@ bash scripts/05_make_bootimg.sh dist/boot.img  # fastboot boot 测试镜像
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `ACK_TAG` | ACK 内核 tag（默认自动使用 android13-5.15 最新） | 自动 |
+| `ACK_TAG` | ACK 内核 tag | `android13-5.15.211_r00` |
 | `SUKISU_VERSION` | SukiSU 版本（tag/分支/commit/`latest`） | `builtin` |
 | `SUSFS` / `KPM` | 功能开关 | 开 |
 | `BBR` | 网络优化（BBRv3+ECN+NETFILTER） | 关 |
-| `RESUBLEVEL` / `SUFFIX` | 版本伪装 / 自定义后缀 | 关 |
+| `RESUBLEVEL` / `SUFFIX` | 版本伪装 / 替换默认版本后缀 | 关/空 |
 | `UPLOAD_RELEASE` | 上传 GitHub Release | 关 |
 
 产物：AnyKernel3 zip + manager APK（自动下载与内核版本匹配的官方 APK）+ 版本一致性校验。
@@ -63,7 +67,7 @@ fastboot boot boot-xxx.img
 
 ## ⚠️ 已知限制（真机验证结论）
 
-1. **配置不可偏离 GKI 官方规范**（关 KASAN / LTO_NONE / 无 CFI 会 bootloop）——脚本已固化
+1. **配置不可偏离 GKI 官方规范**（关 KASAN / LTO_NONE / 无 CFI 会 bootloop）——脚本已固化并在 `02_set_config.sh` 中增加关键配置断言
 2. **ZRAM lz4k/lz4kd 不可用**（第三方实现与 MTE 不兼容，会 bootloop）——用内核自带算法
 3. **LZ4 升级补丁会导致 bootloop**——已弃用
 4. **vendor 模块 vermagic 不匹配**：不加载但系统正常启动（实测），指纹/相机/音频正常

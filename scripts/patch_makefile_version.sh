@@ -9,12 +9,13 @@ SUFFIX="${2:--android13-8-00019-gf4321180a397-ab15212794}"
 MF="$KERNEL_DIR/Makefile"
 [[ -f "$MF" ]] || { echo "Makefile 不存在: $MF" >&2; exit 1; }
 
-# 1) 变量定义（不存在才插入）
-if ! grep -q 'OFFICIAL_VERSION_SUFFIX' "$MF"; then
+# 1) 变量定义：不存在则插入，存在则更新（保证多次构建改 SUFFIX 生效）
+if grep -q '^OFFICIAL_VERSION_SUFFIX' "$MF"; then
+  sed -i "s|^OFFICIAL_VERSION_SUFFIX[[:space:]]*[:?]*=.*|OFFICIAL_VERSION_SUFFIX ?= $SUFFIX|" "$MF"
+  echo "已更新 OFFICIAL_VERSION_SUFFIX -> $SUFFIX"
+else
   sed -i "s|^filechk_kernel.release = \\\\|BRANCH ?= android13-5.15\nKMI_GENERATION ?= 8\nOFFICIAL_VERSION_SUFFIX ?= $SUFFIX\nfilechk_kernel.release = \\\\|" "$MF"
   echo "已注入 OFFICIAL_VERSION_SUFFIX 变量"
-else
-  echo "OFFICIAL_VERSION_SUFFIX 已存在，跳过"
 fi
 
 # 2) filechk 统一为简化版 (去掉 setlocalversion, 防 UTS_RELEASE 超 64 字符)
