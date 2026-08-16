@@ -156,7 +156,12 @@ fi
 # ---------- 5. BBRv3 ----------
 if [[ "$BBR_ENABLE" == "1" ]]; then
   log "5/7 应用 BBRv3 backport (android13-5.15) ..."
-  patch -p1 < "$ROOT_DIR/patches/bbrv3/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch" 2>&1 | tail -1
+  patch -p1 < "$ROOT_DIR/patches/bbrv3/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch" 2>&1 | tail -30 || true
+  REJS=$(find . -name '*.rej' | grep -v '^./out/')
+  if [ -n "$REJS" ]; then
+    echo "⚠️ BBR 补丁 reject 文件:"; echo "$REJS"
+    for r in $REJS; do echo "--- $r ---"; head -10 "$r"; done
+  fi
   find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f
 else
   log "5/7 跳过 BBRv3"
