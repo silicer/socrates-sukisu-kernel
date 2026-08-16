@@ -14,13 +14,13 @@ if [[ ! -f "$TOOLS_DIR/bin/clang" ]]; then
     rm -rf "$TOOLS_DIR"
     mkdir -p "$TOOLS_DIR"
     curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
-    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 || die "clang 解压失败"
+    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" || die "clang 解压失败"
     rm -f /tmp/clang.tar.gz
   else
     log "下载 clang $CLANG_VERSION ($CLANG_TARBALL_URL) ..."
     mkdir -p "$TOOLS_DIR"
     curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
-    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 || die "clang 解压失败"
+    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" || die "clang 解压失败"
     rm -f /tmp/clang.tar.gz
   fi
 fi

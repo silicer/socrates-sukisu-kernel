@@ -97,7 +97,7 @@ jobs:
           mkdir -p tools
           curl -fL --retry 3 -o /tmp/clang.tar.gz \
             "https://github.com/ravindu644/Android-Kernel-Tutorials/releases/download/toolchains/clang-r450784e.tar.gz"
-          tar -xzf /tmp/clang.tar.gz -C tools --strip-components=1
+          tar -xzf /tmp/clang.tar.gz -C tools
           rm -f /tmp/clang.tar.gz
           tools/bin/clang --version | head -1
 
