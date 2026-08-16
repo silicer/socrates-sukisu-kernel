@@ -43,8 +43,7 @@ bash scripts/05_make_bootimg.sh dist/boot.img  # fastboot boot 测试镜像
 | `ACK_TAG` | ACK 内核 tag | `android13-5.15.211_r00` |
 | `SUKISU_VERSION` | SukiSU 版本（tag/分支/commit/`latest`） | `builtin` |
 | `SUSFS` / `KPM` | 功能开关 | 开 |
-| `BBR` / `ZRAM` | 网络 / 内存优化（可选） | 关 |
-| `LZ4_UPDATE` / `UNICODE_BYPASS` / `RE_KERNEL` | 实验功能 | 关 |
+| `BBR` | 网络优化（BBRv3+ECN+NETFILTER） | 关 |
 | `RESUBLEVEL` / `SUFFIX` | 版本伪装 / 自定义后缀 | 关 |
 | `UPLOAD_RELEASE` | 上传 GitHub Release | 关 |
 

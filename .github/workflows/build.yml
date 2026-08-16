@@ -12,14 +12,6 @@ on:
         description: 'SukiSU 统一版本入口: tag/分支/commit, 或 latest (最新 release)。默认 builtin 分支 = 使用该分支最新提交 (仅 builtin 带 SUSFS 接口)'
         required: false
         default: 'builtin'
-      KSU_MANAGER_BRANCH:
-        description: '[废弃兼容] 旧管理器分支参数, 若填写将覆盖 SUKISU_VERSION 作为 checkout ref'
-        required: false
-        default: ''
-      KSU_BUILTIN_BRANCH:
-        description: '[废弃兼容] 旧内置分支参数, 若填写将覆盖 SUKISU_VERSION 作为 checkout ref'
-        required: false
-        default: ''
       SUSFS:
         description: '启用 SUSFS (需外部 susfs4ksu 补丁)'
         type: boolean
@@ -30,22 +22,6 @@ on:
         default: true
       BBR:
         description: 'BBRv3 + ECN + NETFILTER/IP_SET 网络增强 (需 BBRv3 补丁)'
-        type: boolean
-        default: false
-      ZRAM:
-        description: 'ZRAM 优化 (lz4k 补丁)'
-        type: boolean
-        default: false
-      LZ4_UPDATE:
-        description: 'Numbersf LZ4 升级'
-        type: boolean
-        default: false
-      UNICODE_BYPASS:
-        description: 'Unicode 绕过补丁'
-        type: boolean
-        default: false
-      RE_KERNEL:
-        description: 'Re:Kernel (Sakion-Team, LKM, 需 KPM)'
         type: boolean
         default: false
       RESUBLEVEL:
@@ -80,7 +56,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             pahole cpio zstd kmod bc bison flex libssl-dev \
-            libelf-dev dwarves python3 git curl unzip zip \
+            libelf-dev dwarves python3 git curl unzip zip ccache \
             >/dev/null
           pahole --version
 
@@ -112,13 +88,8 @@ jobs:
         id: sukisu
         env:
           SUKISU_VERSION: ${{ inputs.SUKISU_VERSION }}
-          KSU_MANAGER_BRANCH: ${{ inputs.KSU_MANAGER_BRANCH }}
-          KSU_BUILTIN_BRANCH: ${{ inputs.KSU_BUILTIN_BRANCH }}
         run: |
           REF="$SUKISU_VERSION"
-          # 旧输入兼容: 显式填写的旧分支参数覆盖 SUKISU_VERSION
-          [ -n "$KSU_BUILTIN_BRANCH" ] && REF="$KSU_BUILTIN_BRANCH"
-          [ -n "$KSU_MANAGER_BRANCH" ] && REF="$KSU_MANAGER_BRANCH"
           if [ "$REF" = "latest" ]; then
             REF=$(curl -fsSL https://api.github.com/repos/SukiSU-Ultra/SukiSU-Ultra/releases/latest \
               | grep '"tag_name"' | head -1 | sed -E 's/.*"v?([^"]+)".*/\1/')
@@ -177,10 +148,6 @@ jobs:
           SUKISU_VERSION: ${{ steps.sukisu.outputs.SUKISU_REF }}
           SUSFS_ENABLE: ${{ inputs.SUSFS && '1' || '0' }}
           BBR_ENABLE: ${{ inputs.BBR && '1' || '0' }}
-          ZRAM_ENABLE: ${{ inputs.ZRAM && '1' || '0' }}
-          LZ4_UPDATE: ${{ inputs.LZ4_UPDATE && '1' || '0' }}
-          UNICODE_ENABLE: ${{ inputs.UNICODE_BYPASS && '1' || '0' }}
-          RE_KERNEL_ENABLE: ${{ inputs.RE_KERNEL && '1' || '0' }}
         run: |
           bash scripts/06_integrate_features.sh
 
@@ -188,9 +155,7 @@ jobs:
         env:
           SUSFS_ENABLE: ${{ inputs.SUSFS && '1' || '0' }}
           BBR_ENABLE: ${{ inputs.BBR && '1' || '0' }}
-          ZRAM_ENABLE: ${{ inputs.ZRAM && '1' || '0' }}
           KPM_ENABLE: ${{ inputs.KPM && '1' || '0' }}
-          RE_KERNEL_ENABLE: ${{ inputs.RE_KERNEL && '1' || '0' }}
           SUKISU_CHECKOUT: /tmp/SukiSU-checkout
           KSU_VERSION_AUTO: '1'
           VERSION_FIX: '1'
@@ -210,9 +175,41 @@ jobs:
           fi
           grep -E '^CONFIG_(KSU|KSU_SUSFS|KPM|LTO_CLANG_THIN)' kernel_source/out/.config | head -5
 
-      - name: 编译内核
+      - name: Restore Ccache
+        id: restore-ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-${{ inputs.ACK_TAG }}-${{ runner.os }}
+
+      - name: Restore ThinLTO Cache
+        id: restore-thinlto
+        uses: actions/cache/restore@v4
+        with:
+          path: .thinlto-cache
+          key: thinlto-${{ inputs.ACK_TAG }}-${{ runner.os }}
+
+      - name: 编译内核 (ccache + thinLTO 缓存)
+        env:
+          CCACHE_ENABLE: '1'
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          LDCACHE_DIR: ${{ github.workspace }}/.thinlto-cache
         run: |
           bash scripts/03_build_kernel.sh
+
+      - name: Save Ccache
+        if: steps.restore-ccache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ inputs.ACK_TAG }}-${{ runner.os }}
+
+      - name: Save ThinLTO Cache
+        if: steps.restore-thinlto.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .thinlto-cache
+          key: thinlto-${{ inputs.ACK_TAG }}-${{ runner.os }}
 
       - name: 打包 AnyKernel3
         env:
@@ -265,5 +262,5 @@ jobs:
           name: socrates kernel ${{ inputs.ACK_TAG }} build #${{ github.run_number }}
           body: |
             **内核版本**: ${{ steps.info.outputs.KERNEL_VERSION }}
-            **SukiSU**: ${{ inputs.KSU_BUILTIN_BRANCH }} | **SUSFS**: ${{ inputs.SUSFS }} | **KPM**: ${{ inputs.KPM }}
+            **SukiSU**: ${{ inputs.SUKISU_VERSION }} | **SUSFS**: ${{ inputs.SUSFS }} | **KPM**: ${{ inputs.KPM }}
           files: dist/AnyKernel3_socrates_*.zip
