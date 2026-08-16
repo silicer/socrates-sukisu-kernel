@@ -7,11 +7,12 @@ source "$(dirname "$0")/common.sh"
 setup_proxy
 
 # ---------- 1. clang 工具链 ----------
-if [[ ! -x "$TOOLS_DIR/bin/clang" ]]; then
+# 注: CI 的 cache step 可能已解压到 tools/, 这里用 -f 判断 + --overwrite 幂等
+if [[ ! -f "$TOOLS_DIR/bin/clang" ]]; then
   log "下载 clang $CLANG_VERSION ($CLANG_TARBALL_URL) ..."
   mkdir -p "$TOOLS_DIR"
   curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
-  tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 || die "clang 解压失败"
+  tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 --overwrite || die "clang 解压失败"
   rm -f /tmp/clang.tar.gz
 fi
 "$TOOLS_DIR/bin/clang" --version | head -1
