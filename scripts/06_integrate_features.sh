@@ -128,7 +128,7 @@ if 'susfs_def.h' not in s:
     open(p,'w').write(s)
 PYEOF
   # 清理 reject/orig (补丁冲突残留; fts_521 等设备专属 Makefile.rej 对小米设备无意义, 丢弃)
-  find . -name '*.rej' -o -name '*.orig' | grep -v '^./out/' | xargs -r rm -f
+  find . -name '*.rej' -o -name '*.orig' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "2/7 跳过 SUSFS"
 fi
@@ -148,7 +148,7 @@ if [[ "$ZRAM_ENABLE" == "1" ]]; then
   cp -r "$SUKISU_PATCH_DIR"/other/zram/lz4k_oplus lib/
   patch -p1 -F 3 < "$SUKISU_PATCH_DIR/other/zram/zram_patch/5.15/lz4kd.patch" 2>&1 | tail -1 || true
   patch -p1 -F 3 < "$SUKISU_PATCH_DIR/other/zram/zram_patch/5.15/lz4k_oplus.patch" 2>&1 | tail -1 || true
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f
+  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "4/7 跳过 ZRAM"
 fi
@@ -162,7 +162,7 @@ if [[ "$BBR_ENABLE" == "1" ]]; then
     echo "⚠️ BBR 补丁 reject 文件:"; echo "$REJS"
     for r in $REJS; do echo "--- $r ---"; head -10 "$r"; done
   fi
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f
+  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
   # ACK 211 适配: Numbersf 补丁基于 OnePlus 树, 部分 hunk 与 ACK 原版不匹配, 手动补必需项
   # 1) tcp_sock 位域: fast_ack_mode/tlp_orig_data_app_limited (tcp_bbr3.c 必需, ACK 211 无)
   if ! grep -q 'fast_ack_mode' "$KERNEL_DIR/include/linux/tcp.h"; then
@@ -216,7 +216,7 @@ fi
 if [[ "$UNICODE_ENABLE" == "1" ]]; then
   log "6/7 应用 Unicode 绕过补丁 ..."
   patch -p1 --forward < "$ROOT_DIR/patches/unicode/unicode_bypass_fix_6.1-.patch" 2>&1 | tail -1 || true
-  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f
+  find . -name '*.rej' | grep -v '^./out/' | xargs -r rm -f || true
 else
   log "6/7 跳过 Unicode 补丁"
 fi
