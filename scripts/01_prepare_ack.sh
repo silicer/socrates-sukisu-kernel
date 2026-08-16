@@ -7,19 +7,22 @@ source "$(dirname "$0")/common.sh"
 setup_proxy
 
 # ---------- 1. clang 工具链 ----------
-# CI: 由 build.yml 的 cache/下载 step 解压到 tools/; 本地: 自行下载
+# CI: 由 build.yml 的 cache/下载 step 解压到 tools/; 若 tools 不完整 (bin/clang 缺失) 则重新下载
 if [[ ! -f "$TOOLS_DIR/bin/clang" ]]; then
   if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-    echo "诊断: ROOT_DIR=$ROOT_DIR TOOLS_DIR=$TOOLS_DIR pwd=$(pwd)"
-    ls -la "$ROOT_DIR/tools/" 2>/dev/null | head -5
-    ls -la "$ROOT_DIR/tools/bin/clang" 2>/dev/null || echo "tools/bin/clang 不存在"
-    die "clang 未就绪: $TOOLS_DIR/bin/clang (CI 下载 step 应已解压到 tools/)"
+    log "CI: tools/ 不完整 (bin/clang 缺失), 重新下载解压 ..."
+    rm -rf "$TOOLS_DIR"
+    mkdir -p "$TOOLS_DIR"
+    curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
+    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 || die "clang 解压失败"
+    rm -f /tmp/clang.tar.gz
+  else
+    log "下载 clang $CLANG_VERSION ($CLANG_TARBALL_URL) ..."
+    mkdir -p "$TOOLS_DIR"
+    curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
+    tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 || die "clang 解压失败"
+    rm -f /tmp/clang.tar.gz
   fi
-  log "下载 clang $CLANG_VERSION ($CLANG_TARBALL_URL) ..."
-  mkdir -p "$TOOLS_DIR"
-  curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
-  tar -xzf /tmp/clang.tar.gz -C "$TOOLS_DIR" --strip-components=1 --overwrite || die "clang 解压失败"
-  rm -f /tmp/clang.tar.gz
 fi
 "$TOOLS_DIR/bin/clang" --version | head -1
 
