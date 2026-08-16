@@ -7,8 +7,14 @@ source "$(dirname "$0")/common.sh"
 setup_proxy
 
 # ---------- 1. clang 工具链 ----------
-# 注: CI 的 cache step 可能已解压到 tools/, 这里用 -f 判断 + --overwrite 幂等
+# CI: 由 build.yml 的 cache/下载 step 解压到 tools/; 本地: 自行下载
 if [[ ! -f "$TOOLS_DIR/bin/clang" ]]; then
+  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    echo "诊断: ROOT_DIR=$ROOT_DIR TOOLS_DIR=$TOOLS_DIR pwd=$(pwd)"
+    ls -la "$ROOT_DIR/tools/" 2>/dev/null | head -5
+    ls -la "$ROOT_DIR/tools/bin/clang" 2>/dev/null || echo "tools/bin/clang 不存在"
+    die "clang 未就绪: $TOOLS_DIR/bin/clang (CI 下载 step 应已解压到 tools/)"
+  fi
   log "下载 clang $CLANG_VERSION ($CLANG_TARBALL_URL) ..."
   mkdir -p "$TOOLS_DIR"
   curl -fL --retry 3 --retry-delay 5 -o /tmp/clang.tar.gz "$CLANG_TARBALL_URL" || die "clang 下载失败"
