@@ -4,10 +4,10 @@
 
 ## ✨ 特性
 
-- **ACK 官方 GKI 内核**：kernel/common `android13-5.15.211_r00`（纯 GKI，最新 5.15）
+- **ACK 官方 GKI 内核**：kernel/common `android13-5.15` 系列（纯 GKI，构建时自动拉取最新 tag）
 - **SukiSU Ultra**（builtin 分支内置）+ **SUSFS**（隐藏/伪装/防检测）
 - **KPM**（内核补丁模块，支持 .kpm 模块加载）
-- **KSU_VERSION 自动同步**：每次构建自动计算 SukiSU main 线版本号，与官方管理器 APK 永远一致（当前 40856）
+- **KSU_VERSION 自动同步**：每次构建自动计算 SukiSU main 线最新版本号，与官方管理器 APK 永远一致
 - **可选优化**：BBRv3 + ECN + NETFILTER/IP_SET 网络增强、ZRAM lz4k
 - **配置保持 GKI 官方规范**（KASAN_HW_TAGS + LTO_THIN + CFI + SCS）——真机验证，保证可启动
 
@@ -40,7 +40,7 @@ bash scripts/05_make_bootimg.sh dist/boot.img  # fastboot boot 测试镜像
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
-| `ACK_TAG` | ACK 内核 tag | `android13-5.15.211_r00` |
+| `ACK_TAG` | ACK 内核 tag（默认自动使用 android13-5.15 最新） | 自动 |
 | `SUKISU_VERSION` | SukiSU 版本（tag/分支/commit/`latest`） | `builtin` |
 | `SUSFS` / `KPM` | 功能开关 | 开 |
 | `BBR` | 网络优化（BBRv3+ECN+NETFILTER） | 关 |

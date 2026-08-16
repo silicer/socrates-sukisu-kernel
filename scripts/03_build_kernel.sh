@@ -11,8 +11,12 @@ setup_toolchain
 
 JOBS="${1:-}"
 JOBS="${JOBS#-j}"
-# 默认留一个核给系统 (4 核机器 = -j3); 可显式传 -jN 覆盖
-JOBS="${JOBS:-$(( $(nproc) - 1 ))}"
+# CI (GitHub Actions) 用全部核; 本地默认留一核给系统; 可显式传 -jN 覆盖
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+  JOBS="${JOBS:-$(nproc)}"
+else
+  JOBS="${JOBS:-$(( $(nproc) - 1 ))}"
+fi
 
 cd "$KERNEL_DIR"
 [[ -f out/.config ]] || die "缺少 out/.config，请先运行 scripts/02_set_config.sh"
